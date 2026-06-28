@@ -1,0 +1,6 @@
+{
+  "name": "Community Issue Reporter",
+  "description": "A comprehensive app to report community issues like potholes, broken streetlights, or garbage dumping, complete with Google Maps location mapping, Gemini AI image analysis, and status tracking.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
