@@ -25,6 +25,7 @@ import IssueMap from "./components/IssueMap";
 import ReportModal from "./components/ReportModal";
 import { Issue, DashboardStats } from "./types";
 import { APIProvider } from "@vis.gl/react-google-maps";
+import { saveIssue, getIssues, updateIssueStatus, deleteIssue } from "./firebase";
 
 const API_KEY =
   process.env.GOOGLE_MAPS_PLATFORM_KEY ||
@@ -42,7 +43,8 @@ const INITIAL_ISSUES: Issue[] = [
     date: "2026-06-27T04:26:00",
     image: null,
     lat: 37.7946,
-    lng: -122.3999
+    lng: -122.3999,
+    firebaseId: ""
   },
   {
     id: 2,
@@ -54,7 +56,8 @@ const INITIAL_ISSUES: Issue[] = [
     date: "2026-06-27T04:24:00",
     image: null,
     lat: 37.7989,
-    lng: -122.4662
+    lng: -122.4662,
+    firebaseId: ""
   },
   {
     id: 3,
@@ -66,7 +69,8 @@ const INITIAL_ISSUES: Issue[] = [
     date: "2026-06-25T04:24:00",
     image: null,
     lat: 37.7749,
-    lng: -122.4194
+    lng: -122.4194,
+    firebaseId: ""
   }
 ];
 
@@ -77,20 +81,8 @@ interface Toast {
 }
 
 export default function App() {
-  const [issues, setIssues] = useState<Issue[]>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("community_issues");
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          console.error("Failed to parse issues from localStorage:", e);
-        }
-      }
-    }
-    return INITIAL_ISSUES;
-  });
-
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -102,10 +94,29 @@ export default function App() {
   const [severityFilter, setSeverityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // Save to localStorage whenever issues change
+  // Load issues from Firebase on mount
   useEffect(() => {
-    localStorage.setItem("community_issues", JSON.stringify(issues));
-  }, [issues]);
+    async function loadIssues() {
+      try {
+        setIsLoading(true);
+        const fetchedIssues = await getIssues();
+        if (fetchedIssues && fetchedIssues.length > 0) {
+          setIssues(fetchedIssues as Issue[]);
+        } else {
+          setIssues(INITIAL_ISSUES);
+          for (const issue of INITIAL_ISSUES) {
+            await saveIssue(issue);
+          }
+        }
+      } catch (error) {
+        console.error("Error loading issues:", error);
+        setIssues(INITIAL_ISSUES);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadIssues();
+  }, []);
 
   // Load and apply theme on launch
   useEffect(() => {
@@ -145,13 +156,13 @@ export default function App() {
 
   // Severity data for Doughnut chart
   const severityData = [
-    { name: "Low Severity", value: issues.filter((i) => i.severity === "Low").length, color: "#10b981" }, // emerald-500
-    { name: "Medium Severity", value: issues.filter((i) => i.severity === "Medium").length, color: "#f59e0b" }, // amber-500
-    { name: "High Severity", value: issues.filter((i) => i.severity === "High").length, color: "#ef4444" } // rose-500
+    { name: "Low Severity", value: issues.filter((i) => i.severity === "Low").length, color: "#10b981" },
+    { name: "Medium Severity", value: issues.filter((i) => i.severity === "Medium").length, color: "#f59e0b" },
+    { name: "High Severity", value: issues.filter((i) => i.severity === "High").length, color: "#ef4444" }
   ];
 
   // Handles adding new issue from ReportModal
-  const handleAddNewIssue = (newIssueData: {
+  const handleAddNewIssue = async (newIssueData: {
     category: string;
     severity: "Low" | "Medium" | "High";
     description: string;
@@ -170,26 +181,52 @@ export default function App() {
       date: new Date().toISOString(),
       image: newIssueData.image,
       lat: newIssueData.lat,
-      lng: newIssueData.lng
+      lng: newIssueData.lng,
+      firebaseId: ""
     };
 
-    setIssues((prev) => [newIssue, ...prev]);
-    showToast("Community issue successfully logged & analyzed by Gemini!", "success");
+    try {
+      const docId = await saveIssue(newIssue);
+      const issueWithId = { ...newIssue, firebaseId: docId };
+      setIssues((prev) => [issueWithId as unknown as Issue, ...prev]);
+      showToast("Community issue successfully logged & analyzed by Gemini!", "success");
+    } catch (error) {
+      console.error("Error saving issue:", error);
+      showToast("Failed to save issue. Please try again.", "error");
+    }
   };
 
   // Handles status change
-  const handleStatusChange = (id: number, newStatus: Issue["status"]) => {
-    setIssues((prev) =>
-      prev.map((issue) => (issue.id === id ? { ...issue, status: newStatus } : issue))
-    );
-    setStatusMenuOpen(null);
-    showToast(`Status updated to: ${newStatus}`, "success");
+  const handleStatusChange = async (id: number, newStatus: Issue["status"]) => {
+    try {
+      const issueToUpdate = issues.find((issue) => issue.id === id);
+      if (issueToUpdate && issueToUpdate.firebaseId) {
+        await updateIssueStatus(issueToUpdate.firebaseId, newStatus);
+      }
+      setIssues((prev) =>
+        prev.map((issue) => (issue.id === id ? { ...issue, status: newStatus } : issue))
+      );
+      setStatusMenuOpen(null);
+      showToast(`Status updated to: ${newStatus}`, "success");
+    } catch (error) {
+      console.error("Error updating status:", error);
+      showToast("Failed to update status. Please try again.", "error");
+    }
   };
 
   // Handles deleting issue
-  const handleDeleteIssue = (id: number) => {
-    setIssues((prev) => prev.filter((i) => i.id !== id));
-    showToast("Report successfully removed", "info");
+  const handleDeleteIssue = async (id: number) => {
+    try {
+      const issueToDelete = issues.find((issue) => issue.id === id);
+      if (issueToDelete && issueToDelete.firebaseId) {
+        await deleteIssue(issueToDelete.firebaseId);
+      }
+      setIssues((prev) => prev.filter((i) => i.id !== id));
+      showToast("Report successfully removed", "info");
+    } catch (error) {
+      console.error("Error deleting issue:", error);
+      showToast("Failed to delete issue. Please try again.", "error");
+    }
   };
 
   // Filtered Issues
@@ -201,7 +238,6 @@ export default function App() {
     const matchesCategory = categoryFilter === "all" || issue.category === categoryFilter;
     const matchesSeverity = severityFilter === "all" || issue.severity === severityFilter;
     const matchesStatus = statusFilter === "all" || issue.status === statusFilter;
-
     return matchesSearch && matchesCategory && matchesSeverity && matchesStatus;
   });
 
@@ -250,6 +286,17 @@ export default function App() {
   const toggleTheme = () => {
     setTheme((prev) => (prev === "light" ? "dark" : "light"));
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] dark:bg-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-slate-500 dark:text-slate-400">Loading issues...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <APIProvider apiKey={API_KEY} version="weekly">
@@ -313,7 +360,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Interactive Navigation tab-style selectors in the header */}
           <div className="hidden md:flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
             <button
               onClick={() => {
@@ -356,7 +402,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* Theme Toggle */}
             <button
               onClick={toggleTheme}
               className="p-2.5 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-all cursor-pointer min-h-[40px] min-w-[40px] border border-slate-200 dark:border-slate-800"
@@ -365,7 +410,6 @@ export default function App() {
               {theme === "light" ? <Moon className="w-4.5 h-4.5" /> : <Sun className="w-4.5 h-4.5" />}
             </button>
 
-            {/* Report Button */}
             <button
               onClick={() => setIsModalOpen(true)}
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold text-sm shadow-sm transition-all min-h-[40px] cursor-pointer"
@@ -381,7 +425,6 @@ export default function App() {
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 space-y-8">
         
-        {/* Google Map Section */}
         <section id="interactive-map" className="space-y-3 scroll-mt-20">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -393,7 +436,6 @@ export default function App() {
           <IssueMap issues={issues} />
         </section>
 
-        {/* Severity Chart Section */}
         <section className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm transition-colors">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="space-y-1 text-center md:text-left">
@@ -405,7 +447,6 @@ export default function App() {
                 Visual analysis of reported issues by urgency level
               </p>
             </div>
-            
             <div className="w-full md:w-auto flex flex-wrap justify-center gap-6 text-xs font-semibold">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
@@ -456,7 +497,6 @@ export default function App() {
                 No issue reports available to display chart analysis.
               </div>
             )}
-            
             {stats.total > 0 && (
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                 <span className="text-xl font-black text-slate-900 dark:text-white leading-none">
@@ -470,7 +510,6 @@ export default function App() {
           </div>
         </section>
 
-        {/* Statistics Grid */}
         <section className="grid grid-cols-1 sm:grid-cols-3 gap-6">
           <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between relative overflow-hidden transition-colors">
             <div>
@@ -503,14 +542,9 @@ export default function App() {
           </div>
         </section>
 
-        {/* Dashboard Content split */}
         <div className="space-y-6">
-          
-          {/* Filters Bar */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm transition-colors space-y-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              
-              {/* Search */}
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                 <input
@@ -522,7 +556,6 @@ export default function App() {
                 />
               </div>
 
-              {/* Dropdown Filters */}
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest mr-2">
                   <Filter className="w-3.5 h-3.5" />
@@ -579,11 +612,9 @@ export default function App() {
                   </button>
                 )}
               </div>
-
             </div>
           </div>
 
-          {/* Issues List Header */}
           <div className="flex items-center justify-between px-1">
             <h2 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
               <FileText className="w-4 h-4 text-blue-600" />
@@ -592,7 +623,6 @@ export default function App() {
             <div className="text-[11px] text-slate-400">Sorted by Date (Newest first)</div>
           </div>
 
-          {/* Issues Grid */}
           <AnimatePresence mode="popLayout">
             {filteredIssues.length === 0 ? (
               <motion.div
@@ -620,7 +650,6 @@ export default function App() {
                     exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
                     className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all flex flex-col overflow-hidden group relative"
                   >
-                    {/* Image Area if uploaded */}
                     {issue.image ? (
                       <div className="h-44 overflow-hidden relative border-b border-slate-200 dark:border-slate-800">
                         <img
@@ -643,16 +672,12 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Card Content */}
                     <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
-                      
                       <div className="space-y-3">
-                        {/* Header: Badges & Trash */}
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <span className={`px-2 py-0.5 text-[9px] font-bold rounded border uppercase tracking-wider ${getSeverityBadgeStyles(issue.severity)}`}>
                             {issue.severity} Severity
                           </span>
-
                           <button
                             onClick={() => handleDeleteIssue(issue.id)}
                             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 rounded-lg transition-all cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center border border-transparent hover:border-rose-100 dark:hover:border-rose-900/30"
@@ -662,7 +687,6 @@ export default function App() {
                           </button>
                         </div>
 
-                        {/* Title */}
                         <div>
                           <h3 className="text-sm font-bold text-slate-850 dark:text-white capitalize flex items-center gap-1.5 leading-snug">
                             {getCategoryLabel(issue.category)}
@@ -672,7 +696,6 @@ export default function App() {
                           </p>
                         </div>
 
-                        {/* Location Details */}
                         <div className="space-y-1 pt-1.5 border-t border-slate-100 dark:border-slate-800">
                           <div className="flex items-start gap-1.5 text-slate-550 dark:text-slate-400 text-[11px]">
                             <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
@@ -685,7 +708,6 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Footer: Status Badges and Change Dropdown */}
                       <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between relative">
                         <div className="flex flex-col">
                           <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider">Status</span>
@@ -695,7 +717,6 @@ export default function App() {
                           </span>
                         </div>
 
-                        {/* Status Change Dropdown Selector */}
                         <div className="relative">
                           <button
                             type="button"
@@ -729,9 +750,7 @@ export default function App() {
                             </div>
                           )}
                         </div>
-
                       </div>
-
                     </div>
                   </motion.div>
                 ))}
@@ -739,16 +758,14 @@ export default function App() {
             )}
           </AnimatePresence>
         </div>
-
       </main>
 
-      {/* Global Form Modal */}
       <ReportModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleAddNewIssue}
       />
-    </div>
+      </div>
     </APIProvider>
   );
 }

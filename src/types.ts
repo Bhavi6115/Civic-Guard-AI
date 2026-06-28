@@ -1,4 +1,5 @@
 export interface Issue {
+  firebaseId(firebaseId: any, newStatus: string): unknown;
   id: number;
   category: string; // e.g., "pothole" | "broken_streetlight" | "garbage" | "water_leak" | "other"
   severity: "Low" | "Medium" | "High";
