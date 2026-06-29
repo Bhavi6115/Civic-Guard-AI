@@ -88,7 +88,7 @@ gcloud run deploy civicguard \
 ## 📁 Project Structure
 
 ```
-Civic-Guard-AI/
+Vibe2Ship/
 ├── src/
 │   ├── components/
 │   ├── firebase.ts
@@ -109,7 +109,7 @@ MIT License — Created for **Vibe2Ship Hackathon**
 
 ---
 
-## 🙏 Acknowledgments
+##  Acknowledgments
 
 - Google Gemini AI · Google Maps Platform · Firebase · Google Cloud Run
 
@@ -119,5 +119,3 @@ MIT License — Created for **Vibe2Ship Hackathon**
 **GitHub:** https://github.com/Bhavi615/Civic-Guard-AI
 
 ---
-
-**Made with ❤️ for the Vibe2Ship Hackathon** 🚀
